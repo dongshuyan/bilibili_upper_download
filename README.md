@@ -20,15 +20,17 @@
 ## 安装
 1. 克隆或下载此仓库：
 
-git clone https://github.com/dongshuyan/bilibili_upper_download.git
+        git clone https://github.com/dongshuyan/bilibili_upper_download.git
 
-cd bilibili-video-downloader
+        cd bilibili-video-downloader
 
 2. 安装所需的 Python 包：
-pip install -r requirements.txt
+
+        pip install -r requirements.txt
 
 3. 如果尚未安装 `yutto`，请安装它
-参考 https://github.com/yutto-dev/yutto?tab=readme-ov-file
+
+        参考 https://github.com/yutto-dev/yutto?tab=readme-ov-file
 
 4. 准备一个 `config.toml` 文件（见配置部分）。
 
@@ -56,8 +58,10 @@ python bilibili_upper_download.py -u <UID> [-o <OUTPUT_DIR>] [-q <QUALITY>]
   - `16`：240p
 
 ### 示例
-将 UID 为 `12345678` 的所有视频以 1080p 质量下载到 `/path/to/videos`：
-python bilibili_upper_download.py -u 12345678 -o /path/to/videos -q 116
+
+        将 UID 为 `12345678` 的所有视频以 1080p 质量下载到 `/path/to/videos`：
+
+        python bilibili_upper_download.py -u 12345678 -o /path/to/videos -q 116
 
 
 ## 配置
@@ -82,4 +86,5 @@ BUVID3 = "your_buvid3_here"      # Bilibili BUVID3 cookie
 
 ### 错误处理
 下载失败时，最多重试 5 次，重试超时基于视频时长动态调整。
+
 持续失败的下载记录在脚本目录下的 download_errors.log 文件中。
