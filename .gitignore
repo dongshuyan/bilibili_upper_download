@@ -4,5 +4,6 @@
 *.log
 old/*
 __pycache__/*
+.DS_Store
 # 例外：不忽略 example.toml
 !example.toml
