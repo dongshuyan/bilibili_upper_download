@@ -139,7 +139,7 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
                     "duration": duration,
                     "progress": progress
                 }
-                download_video(url, output_dir, arg_dict["video_quality"], arg_dict["SESSDATA"], timeout=estimated_time)
+                download_video(url, output_dir, arg_dict["video_quality"], arg_dict["SESSDATA"], title=current_video, timeout=estimated_time)
                 success = True
                 progress = round((i / total_videos) * 100, 2)
                 yield {

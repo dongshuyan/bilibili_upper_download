@@ -176,7 +176,7 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
                     "progress": progress,
                     "downloaded_videos": downloaded_videos
                 }
-                download_video(url, output_dir, arg_dict["video_quality"], arg_dict["SESSDATA"], timeout=estimated_time)
+                download_video(url, output_dir, arg_dict["video_quality"], arg_dict["SESSDATA"], title=current_video, timeout=estimated_time)
                 success = True
                 video_path = os.path.abspath(os.path.join(output_dir, f"{current_video}.mp4"))
                 downloaded_videos.append(video_path)

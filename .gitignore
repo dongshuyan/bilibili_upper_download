@@ -2,6 +2,7 @@
 *.toml
 *temp.py
 *.log
-
+old/*
+__pycache__/*
 # 例外：不忽略 example.toml
 !example.toml

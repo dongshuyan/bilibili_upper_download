@@ -3,7 +3,9 @@ import asyncio
 import subprocess
 import os
 import pandas as pd
-from bilibili_upper_download import read_toml_config, get_user_name, get_user_video_urls, get_video_info, download_video
+from bilibili_upper_download import read_toml_config, get_user_name, get_user_video_urls, get_video_info, download_video, save_to_csv
+from pathlib import Path
+
 
 # Language dictionaries (保持不变)
 TEXTS = {
@@ -68,6 +70,8 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
     global download_df
     quality_value = video_quality.split(" ")[0]
     
+    
+    
     arg_dict = {
         "uid": int(uid),
         "output_dir": str(output_dir if output_dir else "~/Downloads"),
@@ -86,12 +90,29 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
         yield {"log": f"Error loading TOML config: {e}\n", "up_name": "", "download_progress": "0/0", "current_video": "", "duration": "", "progress": 0}
         return
 
+    
+
+    
+
+
     up_name = await get_user_name(int(uid))
-    video_urls = await get_user_video_urls(int(uid))
-    total_videos = len(video_urls)
+    yield {
+        "log": f"Fetching video list for UID: {uid} (UP: {up_name})\n",
+        "up_name": up_name,
+        "download_progress": f"0/?",
+        "current_video": "",
+        "duration": "",
+        "progress": 0
+    }
 
     output_dir = os.path.expanduser(os.path.join(arg_dict["output_dir"], up_name))
     os.makedirs(output_dir, exist_ok=True)
+    csv_path = Path(output_dir) / "video_urls.csv"
+    
+    video_urls = await get_user_video_urls(int(uid),output_dir)
+    total_videos = len(video_urls)
+
+    
 
     yield {
         "log": f"Fetching video list for UID: {uid} (UP: {up_name})\nFound {total_videos} videos to download\n",
@@ -114,9 +135,17 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
         return
 
     log_file = os.path.join(os.path.dirname(__file__), "download_errors.log")
-    for i, url in enumerate(video_urls, 1):
+    for i, video in enumerate(video_urls, 1):
+        url = video['url']
+        print(f"Downloading video {i}/{len(video_urls)}")
         bvid = url.split("/")[-1]
         video_info = await get_video_info(bvid, arg_dict["SESSDATA"], arg_dict["BILI_JCT"], arg_dict["BUVID3"])
+        
+        # 更新视频信息
+        video['title'] = video_info['title']
+        video['duration'] = str(video_info['duration'])
+        save_to_csv(video_urls, csv_path)
+
         current_video = video_info["title"]
         duration = f"{video_info['duration']}s"
         progress = round((i / total_videos) * 100, 2)
@@ -138,8 +167,9 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
         while attempt < max_attempts and not success:
             attempt += 1
             try:
-                download_video(url, output_dir, arg_dict["video_quality"], arg_dict["SESSDATA"], timeout=5 + video_info["duration"] * 2)
+                video_path=download_video(url, output_dir, arg_dict["video_quality"], arg_dict["SESSDATA"], title=current_video, timeout=5 + video_info["duration"] * 2)
                 success = True
+                
                 new_row = pd.DataFrame({
                     "Index": [i],
                     "Video Name": [current_video],
@@ -155,6 +185,11 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
                     "duration": duration,
                     "progress": progress
                 }
+
+                video['downloaded'] = 'True'
+                video['file_path'] = video_path
+                save_to_csv(video_urls, csv_path)
+
             except Exception as e:
                 yield {
                     "log": f"Attempt {attempt}/{max_attempts} failed for {current_video}: {e}\n",
@@ -166,6 +201,9 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
                 }
 
         if not success:
+            video['downloaded'] = 'False'
+            save_to_csv(video_urls, csv_path)
+
             error_msg = f"Failed to download {url} after {max_attempts} attempts.\n"
             with open(log_file, "a", encoding="utf-8") as lf:
                 lf.write(error_msg)
