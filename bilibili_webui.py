@@ -113,6 +113,7 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
 
     log_file = os.path.join(os.path.dirname(__file__), "download_errors.log")
     for i, url in enumerate(video_urls, 1):
+        print(f"Downloading video {i}/{len(video_urls)}")
         bvid = url.split("/")[-1]
         video_info = await get_video_info(bvid, arg_dict["SESSDATA"], arg_dict["BILI_JCT"], arg_dict["BUVID3"])
         current_video = video_info["title"]
@@ -218,9 +219,8 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
 def download_wrapper(uid, output_dir, video_quality, sessdata, bili_jct, buvid3):
     async def run_generator():
         async for result in run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid3):
-            # 使用文件名作为显示值，完整路径存储在状态中
-            video_options = [os.path.basename(path) for path in result["downloaded_videos"]]
-            # 更新下拉菜单，但不改变当前选中值
+            # 限制下拉菜单显示最近 50 个视频
+            video_options = [os.path.basename(path) for path in result["downloaded_videos"][-50:]]
             yield (
                 result["log"],
                 result["up_name"],
@@ -228,7 +228,7 @@ def download_wrapper(uid, output_dir, video_quality, sessdata, bili_jct, buvid3)
                 result["current_video"],
                 result["duration"],
                 result["progress"],
-                gr.update(choices=video_options),  # 只更新 choices，不设置 value
+                gr.update(choices=video_options),
                 result["downloaded_videos"]
             )
     loop = asyncio.new_event_loop()
@@ -243,6 +243,35 @@ def download_wrapper(uid, output_dir, video_quality, sessdata, bili_jct, buvid3)
         pass
     finally:
         loop.close()
+
+async def load_video_with_timeout(video_path, timeout=5):
+    """异步加载视频，带有超时控制"""
+    try:
+        # 模拟检查文件是否可加载（实际由前端处理，但这里添加超时逻辑）
+        await asyncio.wait_for(asyncio.to_thread(lambda: os.path.exists(video_path)), timeout=timeout)
+        return video_path if os.path.exists(video_path) else None
+    except asyncio.TimeoutError:
+        print(f"Loading video {video_path} timed out after {timeout} seconds")
+        return None
+    except Exception as e:
+        print(f"Error loading video {video_path}: {e}")
+        return None
+
+def play_video(selected_video, downloaded_videos):
+    if not selected_video or not downloaded_videos:
+        return gr.update(value=None)
+    
+    for path in downloaded_videos:
+        if os.path.basename(path) == selected_video:
+            print(f"Attempting to load video: {path}")
+            # 使用异步加载并设置超时
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(load_video_with_timeout(path, timeout=5))
+            loop.close()
+            return gr.update(value=result)
+    print(f"Video not found in downloaded list: {selected_video}")
+    return gr.update(value=None)
 
 def create_webui():
     def toggle_language(current_lang):
@@ -270,14 +299,6 @@ def create_webui():
             gr.update(label=texts['video_player_label']),
             new_lang
         ]
-
-    def play_video(selected_video, downloaded_videos):
-        if selected_video and downloaded_videos:
-            for path in downloaded_videos:
-                if os.path.basename(path) == selected_video:
-                    print(f"Playing video from: {path}")
-                    return gr.update(value=path if os.path.exists(path) else None)
-        return gr.update(value=None)
 
     with gr.Blocks(title="Bilibili Video Downloader", theme=gr.themes.Soft()) as demo:
         lang_state = gr.State(value="zh")
@@ -378,7 +399,6 @@ def create_webui():
                             value=None,
                             interactive=True
                         )
-
                         video_player = gr.Video(
                             label=TEXTS["zh"]["video_player_label"],
                             interactive=False
@@ -402,7 +422,6 @@ def create_webui():
             ]
         )
 
-        # 下载按钮只更新界面状态，不影响 video_player
         download_btn.click(
             fn=download_wrapper,
             inputs=[uid_input, output_dir_input, quality_dropdown, sessdata_input, bili_jct_input, buvid3_input],
@@ -412,7 +431,6 @@ def create_webui():
             ]
         )
 
-        # 下拉菜单选择时更新 video_player
         downloaded_videos_dropdown.change(
             fn=play_video,
             inputs=[downloaded_videos_dropdown, downloaded_videos_state],

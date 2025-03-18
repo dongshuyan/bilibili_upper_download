@@ -2,9 +2,10 @@ import gradio as gr
 import asyncio
 import subprocess
 import os
+import ffmpeg
 from bilibili_upper_download import read_toml_config, get_user_name, get_user_video_urls, get_video_info, download_video
-
-# Language dictionaries
+import time
+# 语言字典（未更改）
 TEXTS = {
     "en": {
         "title": "Bilibili Video Downloader",
@@ -28,7 +29,9 @@ TEXTS = {
         "current_video_label": "Current Video",
         "duration_label": "Duration",
         "log_label": "Download Progress",
-        "toggle_button": "Switch to Chinese"
+        "toggle_button": "Switch to Chinese",
+        "downloaded_videos_label": "Downloaded Videos",
+        "video_player_label": "Video Player"
     },
     "zh": {
         "title": "Bilibili视频下载器",
@@ -52,11 +55,39 @@ TEXTS = {
         "current_video_label": "当前视频",
         "duration_label": "时长",
         "log_label": "下载进度",
-        "toggle_button": "切换到英文"
+        "toggle_button": "切换到英文",
+        "downloaded_videos_label": "已下载视频",
+        "video_player_label": "视频播放器"
     }
 }
 
-# ... (run_download function remains unchanged) ...
+def generate_thumbnail(video_path, output_dir):
+    """生成或获取视频的缩略图"""
+    base_name = os.path.splitext(os.path.basename(video_path))[0]
+    thumbnail_path = os.path.join(output_dir, f"{base_name}-poster.jpg")
+    
+    if os.path.exists(thumbnail_path):
+        print(f"发现现有缩略图: {thumbnail_path}")
+        return thumbnail_path
+    
+    # 如果没有现有的缩略图，抽取第一帧并保存
+    try:
+        print(f"正在为 {video_path} 生成缩略图...")
+        stream = ffmpeg.input(video_path, ss=0)  # 提取第0秒（第一帧）
+        stream = ffmpeg.output(stream, thumbnail_path, vframes=1, format='image2', q_v=2)
+        ffmpeg.run(stream, overwrite_output=True, quiet=True)
+        if os.path.exists(thumbnail_path):
+            print(f"成功生成并保存缩略图: {thumbnail_path}")
+            return thumbnail_path
+        else:
+            print(f"缩略图生成失败，未找到文件: {thumbnail_path}")
+            return video_path  # 生成失败时回退到视频路径
+    except ffmpeg.Error as e:
+        print(f"生成缩略图失败 {video_path}: {e.stderr.decode() if e.stderr else str(e)}")
+        return video_path
+    except Exception as e:
+        print(f"未知错误生成缩略图 {video_path}: {str(e)}")
+        return video_path
 
 async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid3):
     quality_value = video_quality.split(" ")[0]
@@ -76,51 +107,56 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
             if key in toml_args["basic"] and toml_args["basic"][key] != "" and toml_args["basic"][key] is not None:
                 arg_dict[key] = toml_args["basic"][key]
     except Exception as e:
-        yield {"log": f"Error loading TOML config: {e}\n", "up_name": "", "total_videos": "", "current_video": "", "duration": "", "progress": 0}
+        yield {"log": f"加载 TOML 配置失败: {e}\n", "up_name": "", "total_videos": "", "current_video": "", "duration": "", "progress": 0, "downloaded_videos": []}
         return
 
     up_name = await get_user_name(int(uid))
     video_urls = await get_user_video_urls(int(uid))
     total_videos = len(video_urls)
 
-    output_dir = os.path.join(arg_dict["output_dir"], up_name)
+    output_dir = os.path.expanduser(os.path.join(arg_dict["output_dir"], up_name))
     os.makedirs(output_dir, exist_ok=True)
+    downloaded_videos = []
 
     yield {
-        "log": f"Fetching video list for UID: {uid} (UP: {up_name})\nFound {total_videos} videos to download\n",
+        "log": f"获取 UID {uid} 的视频列表 (UP: {up_name})\n找到 {total_videos} 个视频待下载\n",
         "up_name": up_name,
         "total_videos": str(total_videos),
         "current_video": "",
         "duration": "",
-        "progress": 0
+        "progress": 0,
+        "downloaded_videos": downloaded_videos
     }
 
     if not video_urls:
         yield {
-            "log": "No videos found for this user.\n",
+            "log": "该用户没有找到视频。\n",
             "up_name": up_name,
             "total_videos": "0",
             "current_video": "",
             "duration": "",
-            "progress": 0
+            "progress": 0,
+            "downloaded_videos": downloaded_videos
         }
         return
 
     log_file = os.path.join(os.path.dirname(__file__), "download_errors.log")
     for i, url in enumerate(video_urls, 1):
-        print(f"Downloading video {i}/{len(video_urls)}")
+        print(f"正在下载视频 {i}/{len(video_urls)}")
         bvid = url.split("/")[-1]
         video_info = await get_video_info(bvid, arg_dict["SESSDATA"], arg_dict["BILI_JCT"], arg_dict["BUVID3"])
         current_video = video_info["title"]
-        duration = str(video_info["duration"]) + "s" 
+        duration = str(video_info["duration"]) + "s"
         progress = round((i / total_videos) * 100, 2)
+        
         yield {
-            "log": f"Starting download {i}/{total_videos}: {current_video}\n",
+            "log": f"开始下载 {i}/{total_videos}: {current_video}\n",
             "up_name": up_name,
             "total_videos": str(total_videos),
             "current_video": current_video,
             "duration": duration,
-            "progress": progress
+            "progress": progress,
+            "downloaded_videos": downloaded_videos
         }
 
         estimated_time = 5 + video_info["duration"] * 2
@@ -132,54 +168,63 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
             attempt += 1
             try:
                 yield {
-                    "log": f"Attempt {attempt}/{max_attempts} for video {i}/{total_videos}: {current_video}\n",
+                    "log": f"尝试 {attempt}/{max_attempts} 下载视频 {i}/{total_videos}: {current_video}\n",
                     "up_name": up_name,
                     "total_videos": str(total_videos),
                     "current_video": current_video,
                     "duration": duration,
-                    "progress": progress
+                    "progress": progress,
+                    "downloaded_videos": downloaded_videos
                 }
                 download_video(url, output_dir, arg_dict["video_quality"], arg_dict["SESSDATA"], timeout=estimated_time)
                 success = True
+                video_path = os.path.abspath(os.path.join(output_dir, f"{current_video}.mp4"))
+                downloaded_videos.append(video_path)
+                time.sleep(1)  # 等待文件写入
+                thumbnail_path = generate_thumbnail(video_path, output_dir)
                 progress = round((i / total_videos) * 100, 2)
                 yield {
-                    "log": f"Successfully downloaded {i}/{total_videos}: {current_video}\n",
+                    "log": f"成功下载 {i}/{total_videos}: {current_video}\n视频保存至: {video_path}\n缩略图: {thumbnail_path}\n",
                     "up_name": up_name,
                     "total_videos": str(total_videos),
                     "current_video": current_video,
                     "duration": duration,
-                    "progress": progress
+                    "progress": progress,
+                    "downloaded_videos": downloaded_videos
                 }
             except subprocess.TimeoutExpired:
                 yield {
-                    "log": f"Timeout on attempt {attempt}/{max_attempts} for {url}, retrying...\n",
+                    "log": f"尝试 {attempt}/{max_attempts} 下载 {url} 超时，正在重试...\n",
                     "up_name": up_name,
                     "total_videos": str(total_videos),
                     "current_video": current_video,
                     "duration": duration,
-                    "progress": progress
+                    "progress": progress,
+                    "downloaded_videos": downloaded_videos
                 }
             except subprocess.CalledProcessError as e:
                 yield {
-                    "log": f"Error on attempt {attempt}/{max_attempts} for {url}: {e}, retrying...\n",
+                    "log": f"尝试 {attempt}/{max_attempts} 下载 {url} 出错: {e}，正在重试...\n",
                     "up_name": up_name,
                     "total_videos": str(total_videos),
                     "current_video": current_video,
                     "duration": duration,
-                    "progress": progress
+                    "progress": progress,
+                    "downloaded_videos": downloaded_videos
                 }
             except Exception as e:
                 yield {
-                    "log": f"Unexpected error on attempt {attempt}/{max_attempts} for {url}: {e}, retrying...\n",
+                    "log": f"尝试 {attempt}/{max_attempts} 下载 {url} 遇到未知错误: {e}，正在重试...\n",
                     "up_name": up_name,
                     "total_videos": str(total_videos),
                     "current_video": current_video,
                     "duration": duration,
-                    "progress": progress
+                    "progress": progress,
+                    "downloaded_videos": downloaded_videos
                 }
 
         if not success:
-            error_msg = f"Failed to download {url} after {max_attempts} attempts.\n"
+            error_msg = f"下载 {url} 在 {max_attempts} 次尝试后失败。\n"
             with open(log_file, "a", encoding="utf-8") as lf:
                 lf.write(error_msg)
             yield {
@@ -188,24 +233,38 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
                 "total_videos": str(total_videos),
                 "current_video": current_video,
                 "duration": duration,
-                "progress": progress
+                "progress": progress,
+                "downloaded_videos": downloaded_videos
             }
 
     yield {
-        "log": "Download completed successfully!\n",
+        "log": "下载全部完成！\n",
         "up_name": up_name,
         "total_videos": str(total_videos),
         "current_video": "",
         "duration": "",
-        "progress": 100
+        "progress": 100,
+        "downloaded_videos": downloaded_videos
     }
 
-# Wrapper for Gradio to handle async generator
 def download_wrapper(uid, output_dir, video_quality, sessdata, bili_jct, buvid3):
     async def run_generator():
         async for result in run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid3):
-            yield result["log"], result["up_name"], result["total_videos"], result["current_video"], result["duration"], result["progress"]
-
+            gallery_videos = []
+            for video_path in result["downloaded_videos"][-50:]:
+                base_name = os.path.splitext(os.path.basename(video_path))[0]
+                thumbnail_path = os.path.join(os.path.dirname(video_path), f"{base_name}-poster.jpg")
+                gallery_videos.append(thumbnail_path if os.path.exists(thumbnail_path) else video_path)
+            yield (
+                result["log"],
+                result["up_name"],
+                result["total_videos"],
+                result["current_video"],
+                result["duration"],
+                result["progress"],
+                gallery_videos,
+                result["downloaded_videos"]
+            )
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     gen = run_generator()
@@ -218,6 +277,34 @@ def download_wrapper(uid, output_dir, video_quality, sessdata, bili_jct, buvid3)
         pass
     finally:
         loop.close()
+
+async def load_video_with_timeout(video_path, timeout=5):
+    """异步加载视频，带超时控制"""
+    try:
+        await asyncio.wait_for(asyncio.to_thread(lambda: os.path.exists(video_path)), timeout=timeout)
+        return video_path if os.path.exists(video_path) else None
+    except asyncio.TimeoutError:
+        print(f"加载视频 {video_path} 超时，超过 {timeout} 秒")
+        return None
+    except Exception as e:
+        print(f"加载视频 {video_path} 出错: {e}")
+        return None
+
+def play_video_from_gallery(evt: gr.SelectData, downloaded_videos):
+    """从画廊中播放选中的视频"""
+    if evt.index is None or not downloaded_videos:
+        return gr.update(value=None)
+    
+    selected_video_path = downloaded_videos[-50:][evt.index]
+    if os.path.exists(selected_video_path):
+        print(f"尝试加载视频: {selected_video_path}")
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(load_video_with_timeout(selected_video_path, timeout=5))
+        loop.close()
+        return gr.update(value=result)
+    print(f"未找到视频: {selected_video_path}")
+    return gr.update(value=None)
 
 def create_webui():
     def toggle_language(current_lang):
@@ -241,12 +328,14 @@ def create_webui():
             gr.update(label=texts['log_label']),
             gr.update(value=texts['toggle_button']),
             gr.update(label=texts['credentials_label']),
-            new_lang  # Return the new language state
+            gr.update(label=texts['downloaded_videos_label']),
+            gr.update(label=texts['video_player_label']),
+            new_lang
         ]
 
-    with gr.Blocks(title="Bilibili Video Downloader", theme=gr.themes.Soft()) as demo:
-        # Use State to track current language
-        lang_state = gr.State(value="zh")  # Default to Chinese
+    with gr.Blocks(title="Bilibili视频下载器", theme=gr.themes.Soft()) as demo:
+        lang_state = gr.State(value="zh")
+        downloaded_videos_state = gr.State(value=[])
         
         toggle_btn = gr.Button(value=TEXTS["zh"]["toggle_button"])
         title_md = gr.Markdown(f"# {TEXTS['zh']['title']}")
@@ -297,47 +386,77 @@ def create_webui():
 
             with gr.Column(scale=2):
                 with gr.Row():
-                    up_name_display = gr.Textbox(
-                        label=TEXTS["zh"]["up_name_label"],
-                        value="",
-                        interactive=False,
-                        elem_classes="short-textbox"
-                    )
-                    total_videos_display = gr.Textbox(
-                        label=TEXTS["zh"]["total_videos_label"],
-                        value="",
-                        interactive=False,
-                        elem_classes="short-textbox"
-                    )
-                    progress_bar = gr.Slider(
-                        label=TEXTS["zh"]["progress_label"],
-                        minimum=0,
-                        maximum=100,
-                        value=0,
-                        interactive=False,
-                        elem_classes="progress-bar"
-                    )
-                with gr.Row():
-                    current_video_display = gr.Textbox(
-                        label=TEXTS["zh"]["current_video_label"],
-                        value="",
-                        interactive=False
-                    )
-                    duration_display = gr.Textbox(
-                        label=TEXTS["zh"]["duration_label"],
-                        value="",
-                        interactive=False,
-                        elem_classes="short-textbox"
-                    )
-                output_log = gr.Textbox(
-                    label=TEXTS["zh"]["log_label"],
-                    lines=20,
-                    interactive=False
-                )
+                    with gr.Column(scale=1):
+                        with gr.Row():
+                            up_name_display = gr.Textbox(
+                                label=TEXTS["zh"]["up_name_label"],
+                                value="",
+                                interactive=False,
+                                elem_classes="short-textbox"
+                            )
+                            total_videos_display = gr.Textbox(
+                                label=TEXTS["zh"]["total_videos_label"],
+                                value="",
+                                interactive=False,
+                                elem_classes="short-textbox"
+                            )
+                            progress_bar = gr.Slider(
+                                label=TEXTS["zh"]["progress_label"],
+                                minimum=0,
+                                maximum=100,
+                                value=0,
+                                interactive=False,
+                                elem_classes="progress-bar"
+                            )
+                        with gr.Row():
+                            current_video_display = gr.Textbox(
+                                label=TEXTS["zh"]["current_video_label"],
+                                value="",
+                                interactive=False
+                            )
+                            duration_display = gr.Textbox(
+                                label=TEXTS["zh"]["duration_label"],
+                                value="",
+                                interactive=False,
+                                elem_classes="short-textbox"
+                            )
+                        output_log = gr.Textbox(
+                            label=TEXTS["zh"]["log_label"],
+                            lines=10,
+                            interactive=False
+                        )
+                    with gr.Column(scale=1):
+                        downloaded_videos_gallery = gr.Gallery(
+                            label=TEXTS["zh"]["downloaded_videos_label"],
+                            value=[],
+                            height="400px",  # 固定高度，支持垂直滚动
+                            preview=True,
+                            object_fit="cover"
+                        )
+                        video_player = gr.Video(
+                            label=TEXTS["zh"]["video_player_label"],
+                            interactive=False
+                        )
 
         demo.css = """
             .short-textbox { max-width: 200px; }
             .progress-bar { flex-grow: 1; margin-left: 10px; }
+            video { max-height: 300px; width: 100%; }
+            .gr-gallery { 
+                display: grid; 
+                grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));  # 网格布局，自动换行
+                gap: 10px; 
+                max-height: 400px;  # 与 Gallery 高度一致
+                overflow-y: auto;  # 垂直滚动
+                overflow-x: hidden;  # 禁止水平滚动
+                padding: 10px; 
+            }
+            .gr-gallery img { 
+                width: 100%; 
+                height: 100px;  # 固定缩略图高度
+                object-fit: cover; 
+                cursor: pointer; 
+            }
         """
 
         toggle_btn.click(
@@ -348,14 +467,23 @@ def create_webui():
                 sessdata_input, bili_jct_input, buvid3_input,
                 download_btn, up_name_display, total_videos_display, progress_bar,
                 current_video_display, duration_display, output_log, toggle_btn,
-                credentials_accordion, lang_state  # Add lang_state to outputs
+                credentials_accordion, downloaded_videos_gallery, video_player, lang_state
             ]
         )
 
         download_btn.click(
             fn=download_wrapper,
             inputs=[uid_input, output_dir_input, quality_dropdown, sessdata_input, bili_jct_input, buvid3_input],
-            outputs=[output_log, up_name_display, total_videos_display, current_video_display, duration_display, progress_bar]
+            outputs=[
+                output_log, up_name_display, total_videos_display, current_video_display,
+                duration_display, progress_bar, downloaded_videos_gallery, downloaded_videos_state
+            ]
+        )
+
+        downloaded_videos_gallery.select(
+            fn=play_video_from_gallery,
+            inputs=[downloaded_videos_state],
+            outputs=[video_player]
         )
 
     return demo
