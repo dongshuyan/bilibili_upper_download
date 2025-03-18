@@ -22,7 +22,7 @@
 
         git clone https://github.com/dongshuyan/bilibili_upper_download.git
 
-        cd bilibili-video-downloader
+        cd bilibili_upper_download
 
 2. 安装所需的 Python 包：
 
