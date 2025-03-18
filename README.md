@@ -19,7 +19,9 @@
 
 ## 安装
 1. 克隆或下载此仓库：
-git clone <repository-url>
+
+git clone https://github.com/dongshuyan/bilibili_upper_download.git
+
 cd bilibili-video-downloader
 
 2. 安装所需的 Python 包：
@@ -32,6 +34,7 @@ pip install -r requirements.txt
 
 ## 使用方法
 使用以下命令运行脚本：
+
 python bilibili_upper_download.py -u <UID> [-o <OUTPUT_DIR>] [-q <QUALITY>]
 
 
@@ -69,6 +72,7 @@ video_quality = "127"    # 默认视频质量（8K）
 SESSDATA = "your_sessdata_here"  # Bilibili SESSDATA cookie
 BILI_JCT = "your_bili_jct_here"  # Bilibili BILI_JCT cookie
 BUVID3 = "your_buvid3_here"      # Bilibili BUVID3 cookie
+```
 
 ### 如何获取上述 Bilibili 参数值
 1. 在浏览器中登录 Bilibili。
@@ -76,6 +80,6 @@ BUVID3 = "your_buvid3_here"      # Bilibili BUVID3 cookie
 3. 刷新页面，筛选请求（例如 api.bilibili.com）。
 4. 在 Cookie 头中找到 SESSDATA、BILI_JCT 和 BUVID3。
 
-###错误处理
+### 错误处理
 下载失败时，最多重试 5 次，重试超时基于视频时长动态调整。
 持续失败的下载记录在脚本目录下的 download_errors.log 文件中。
