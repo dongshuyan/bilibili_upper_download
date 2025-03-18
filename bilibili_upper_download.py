@@ -58,15 +58,16 @@ def download_video(url: str, output_dir: str, quality: str, sessdata: str, timeo
     """使用yutto下载单个视频（支持超时）"""
     command = [
         "yutto",
-        "--sessdata", sessdata,
-        "-d", output_dir,
-        "-q", quality,
+        "--sessdata", str(sessdata),
+        "-d", str(output_dir),
+        "-q", str(quality),
+        "--download-interval", "2",
         url
     ]
     subprocess.run(command, check=True, timeout=timeout)
     print(f"Successfully downloaded: {url}")
 
-async def download_all_videos(arg_dict: dict):
+async def download_all_videos(arg_dict: dict, progress_callback=None):
     uid = arg_dict["uid"]
     output_dir = arg_dict["output_dir"]
     quality = arg_dict["video_quality"]
@@ -74,13 +75,23 @@ async def download_all_videos(arg_dict: dict):
     up_name = await get_user_name(uid)
     output_dir = os.path.join(output_dir, up_name)
     os.makedirs(output_dir, exist_ok=True)
+
+    if progress_callback:
+        progress_callback(f"Fetching video list for UID: {uid} (UP: {up_name})\n")
     
     print(f"Fetching video list for UID: {uid}")
     video_urls = await get_user_video_urls(uid)
     
     if not video_urls:
         print("No videos found for this user.")
+        if progress_callback:
+            progress_callback("No videos found for this user.\n")
         return
+    
+    total_videos = len(video_urls)
+
+    if progress_callback:
+        progress_callback(f"Found {total_videos} videos to download\n")
     
     print(f"Found {len(video_urls)} videos to download")
 
@@ -94,9 +105,11 @@ async def download_all_videos(arg_dict: dict):
             BILI_JCT=arg_dict["BILI_JCT"],
             BUVID3=arg_dict["BUVID3"]
         )
-        print(f"Downloading video {i}/{len(video_urls)}")
         duration = video_info["duration"]
+        print(f"Downloading video {i}/{len(video_urls)}")
         print(f"视频名称：{video_info['title']}，视频时长：{duration}秒")
+        if progress_callback:
+            progress_callback(f"Downloading video {i}/{total_videos}: {video_info['title']} (Duration: {video_info['duration']}s)\n")
 
         # 根据视频时长设置超时（可按需调整系数）
         estimated_time = 5 + duration * 2
@@ -107,20 +120,31 @@ async def download_all_videos(arg_dict: dict):
         while attempt < max_attempts and not success:
             attempt += 1
             try:
+                if progress_callback:
+                    progress_callback(f"Attempt {attempt}/{max_attempts} for video {i}/{total_videos}\n")
                 print(f"Download attempt #{attempt}")
                 download_video(url, output_dir, quality, arg_dict["SESSDATA"], timeout=estimated_time)
                 success = True
             except subprocess.TimeoutExpired:
                 print(f"Timeout for {url}, will retry...")
+                if progress_callback:
+                    progress_callback(f"Timeout for {url}, retrying...\n")
             except subprocess.CalledProcessError as e:
                 print(f"Error downloading {url}: {e}, will retry...")
+                if progress_callback:
+                    progress_callback(f"Error downloading {url}: {e}, retrying...\n")
             except Exception as e:
                 print(f"Unexpected error downloading {url}: {e}, will retry...")
+                if progress_callback:
+                    progress_callback(f"Unexpected error downloading {url}: {e}, retrying...\n")
 
         if not success:
             # 记录到log
+            if progress_callback:
+                progress_callback(f"Failed to download {url} after {max_attempts} attempts.\n")
             with open(log_file, "a", encoding="utf-8") as lf:
                 lf.write(f"Failed to download {url} after {max_attempts} attempts.\n")
+                
 
 def parse_arguments():
     """解析命令行参数"""

@@ -1,6 +1,7 @@
 # 忽略所有 .toml 文件
 *.toml
 *temp.py
+*.log
 
 # 例外：不忽略 example.toml
 !example.toml
