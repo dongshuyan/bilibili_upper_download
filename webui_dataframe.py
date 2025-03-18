@@ -137,6 +137,10 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
     log_file = os.path.join(os.path.dirname(__file__), "download_errors.log")
     for i, video in enumerate(video_urls, 1):
         url = video['url']
+        if video['downloaded'] == 'True':
+            print(f"Skipping already downloaded video {i}/{total_videos}: {video['title']}")
+            continue
+
         print(f"Downloading video {i}/{len(video_urls)}")
         bvid = url.split("/")[-1]
         video_info = await get_video_info(bvid, arg_dict["SESSDATA"], arg_dict["BILI_JCT"], arg_dict["BUVID3"])
