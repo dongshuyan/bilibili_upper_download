@@ -84,7 +84,7 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
     try:
         toml_args = read_toml_config()
         for key in arg_dict:
-            if key in toml_args["basic"] and toml_args["basic"][key]:
+            if key in toml_args["basic"] and toml_args["basic"][key] and (arg_dict[key] is None or arg_dict[key] == ""):
                 arg_dict[key] = toml_args["basic"][key]
     except Exception as e:
         yield {"log": f"Error loading TOML config: {e}\n", "up_name": "", "download_progress": "0/0", "current_video": "", "duration": "", "progress": 0}
@@ -149,6 +149,7 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
         video['title'] = video_info['title']
         video['duration'] = str(video_info['duration'])
         save_to_csv(video_urls, csv_path)
+        print("updated video info to csv")
 
         current_video = video_info["title"]
         duration = f"{video_info['duration']}s"
@@ -193,6 +194,7 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
                 video['downloaded'] = 'True'
                 video['file_path'] = video_path
                 save_to_csv(video_urls, csv_path)
+                print("updated download success status to csv")
 
             except Exception as e:
                 yield {
@@ -207,7 +209,7 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
         if not success:
             video['downloaded'] = 'False'
             save_to_csv(video_urls, csv_path)
-
+            print("updated download failed status to csv")
             error_msg = f"Failed to download {url} after {max_attempts} attempts.\n"
             with open(log_file, "a", encoding="utf-8") as lf:
                 lf.write(error_msg)

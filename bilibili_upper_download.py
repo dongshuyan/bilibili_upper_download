@@ -122,7 +122,7 @@ def save_to_csv(video_urls: list, csv_path: Path):
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(video_urls)
-    print(f"Saved video URLs to {csv_path}")
+    # print(f"Saved video URLs to {csv_path}")
 
 def download_video(url: str, output_dir: str, quality: str, sessdata: str, title: str, timeout: int) -> str:
     """使用yutto下载单个视频并返回文件路径"""
