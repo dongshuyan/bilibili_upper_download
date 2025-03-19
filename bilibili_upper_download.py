@@ -182,6 +182,8 @@ def save_to_csv(video_urls: list, csv_path: Path):
 
 
 def download_video(url: str, output_dir: str, quality: str, sessdata: str, video_info: dict, timeout: int) -> str:
+    if timeout>600:
+        timeout = 600
     """使用yutto下载单个视频并返回文件路径"""
     if (len(video_info['pages'])>1):
         command = [

@@ -7,6 +7,48 @@ from bilibili_upper_download import read_toml_config, get_user_name, get_user_vi
 from pathlib import Path
 import platform
 
+
+import json
+
+# Define the config file path
+CONFIG_FILE = Path(__file__).parent / "config.json"
+
+def load_config():
+    """Load the previous configuration from a JSON file."""
+    default_config = {
+        "uid": "",
+        "output_dir": "~/Downloads",
+        "video_quality": "127 (8K)"
+    }
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                config = json.load(f)
+                # Ensure all required keys are present
+                for key in default_config:
+                    if key not in config:
+                        config[key] = default_config[key]
+                return config
+        except Exception as e:
+            print(f"Error loading config: {e}")
+            return default_config
+    return default_config
+
+def save_config(uid, output_dir, video_quality):
+    print(f"Start saving current configuration to the JSON file: {CONFIG_FILE}.")
+    """Save the current configuration to a JSON file."""
+    config = {
+        "uid": uid,
+        "output_dir": output_dir,
+        "video_quality": video_quality
+    }
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=4)
+        print(f"Save JSON file  Successfully")
+    except Exception as e:
+        print(f"Error saving config: {e}")
+
 # Language dictionaries (保持不变)
 TEXTS = {
     "en": {
@@ -47,11 +89,11 @@ TEXTS = {
         "output_dir_placeholder": "~/Downloads",
         "quality_label": "视频质量",
         "credentials_label": "Bilibili凭证（如果在config.toml中可留空）",
-        "sessdata_label": "SESSDATA（下载高清视频必须）",
+        "sessdata_label": "SESSDATA(下载高清视频必须)",
         "sessdata_placeholder": "输入SESSDATA",
-        "bili_jct_label": "BILI_JCT",
+        "bili_jct_label": "BILI_JCT(目前非必须)",
         "bili_jct_placeholder": "输入BILI_JCT",
-        "buvid3_label": "BUVID3",
+        "buvid3_label": "BUVID3(目前非必须)",
         "buvid3_placeholder": "输入BUVID3",
         "start_button": "开始下载",
         "up_name_label": "UP主名称",
@@ -240,30 +282,6 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
         "progress": 100
     }
 
-def download_wrapper(uid, output_dir, video_quality, sessdata, bili_jct, buvid3):
-    global download_df
-    async def run_generator():
-        async for result in run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid3):
-            yield (
-                result["log"],
-                result["up_name"],
-                result["download_progress"],
-                result["current_video"],
-                result["duration"],
-                result["progress"],
-                download_df[["Index", "Video Name", "Duration"]]
-            )
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    gen = run_generator()
-    try:
-        while True:
-            yield loop.run_until_complete(gen.__anext__())
-    except StopAsyncIteration:
-        pass
-    finally:
-        loop.close()
-
 def play_video(evt: gr.SelectData, lang):
     global download_df
     if evt.index and len(evt.index) > 0:
@@ -309,6 +327,9 @@ def handle_playback_choice(choice, video_path):
 
 def download_wrapper(uid, output_dir, video_quality, sessdata, bili_jct, buvid3):
     global download_df
+    # Save the configuration before starting the download
+    save_config(uid, output_dir, video_quality)
+    
     async def run_generator():
         async for result in run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid3):
             yield (
@@ -332,6 +353,9 @@ def download_wrapper(uid, output_dir, video_quality, sessdata, bili_jct, buvid3)
         loop.close()
 
 def create_webui():
+    # Load the previous configuration
+    config = load_config()
+
     def toggle_language(current_lang):
         new_lang = "en" if current_lang == "zh" else "zh"
         texts = TEXTS[new_lang]
@@ -371,14 +395,22 @@ def create_webui():
 
         with gr.Row():
             with gr.Column(scale=1):
-                uid_input = gr.Textbox(label=TEXTS["zh"]["uid_label"], placeholder=TEXTS["zh"]["uid_placeholder"])
-                output_dir_input = gr.Textbox(label=TEXTS["zh"]["output_dir_label"], placeholder=TEXTS["zh"]["output_dir_placeholder"])
+                uid_input = gr.Textbox(
+                    label=TEXTS["zh"]["uid_label"], 
+                    placeholder=TEXTS["zh"]["uid_placeholder"],
+                    value=config["uid"]  # Set default value from config
+                )
+                output_dir_input = gr.Textbox(
+                    label=TEXTS["zh"]["output_dir_label"], 
+                    placeholder=TEXTS["zh"]["output_dir_placeholder"],
+                    value=config["output_dir"]  # Set default value from config
+                )
                 quality_dropdown = gr.Dropdown(
                     label=TEXTS["zh"]["quality_label"],
                     choices=["127 (8K)", "126 (4K HDR)", "125 (4K)", "120 (1080p HDR)", "116 (1080p High)", 
                              "112 (1080p)", "100 (720p High)", "80 (720p)", "74 (480p High)", "64 (480p)", 
                              "32 (360p High)", "16 (360p)"],
-                    value="127 (8K)"
+                    value=config["video_quality"]  # Set default value from config
                 )
                 credentials_accordion = gr.Accordion(TEXTS["zh"]["credentials_label"], open=False)
                 with credentials_accordion:
