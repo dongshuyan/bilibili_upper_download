@@ -3,7 +3,7 @@ import asyncio
 import subprocess
 import os
 import pandas as pd
-from bilibili_upper_download import read_toml_config, get_user_name, get_user_video_urls, get_video_info, download_video, save_to_csv
+from bilibili_upper_download import read_toml_config, get_user_name, get_user_video_urls, get_video_info, download_video, save_to_csv, extract_and_convert_time
 from pathlib import Path
 
 
@@ -136,6 +136,7 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
 
     log_file = os.path.join(os.path.dirname(__file__), "download_errors.log")
     for i, video in enumerate(video_urls, 1):
+        # a=input("Press Enter to continue")
         url = video['url']
         if video['downloaded'] == 'True':
             print(f"Skipping already downloaded video {i}/{total_videos}: {video['title']}")
@@ -147,14 +148,15 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
         
         # 更新视频信息
         video['title'] = video_info['title']
-        video['duration'] = str(video_info['duration'])
+        # video['duration'] = str(video_info['duration'])
+        video['duration'] = extract_and_convert_time(str(video_info['duration']))
+        video['info'] = str(video_info)
         save_to_csv(video_urls, csv_path)
         print("updated video info to csv")
 
         current_video = video_info["title"]
-        duration = f"{video_info['duration']}s"
+        duration = f"{video['duration']}"
         progress = round((i / total_videos) * 100, 2)
-        video_path = os.path.abspath(os.path.join(output_dir, f"{current_video}.mp4"))
 
         yield {
             "log": f"Starting download {i}/{total_videos}: {current_video}\n",
@@ -172,13 +174,13 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
         while attempt < max_attempts and not success:
             attempt += 1
             try:
-                video_path=download_video(url, output_dir, arg_dict["video_quality"], arg_dict["SESSDATA"], title=current_video, timeout=5 + video_info["duration"] * 2)
+                video_path=download_video(url, output_dir, arg_dict["video_quality"], arg_dict["SESSDATA"], video_info=video_info, timeout=5 + video_info["duration"] * 2)
                 success = True
                 
                 new_row = pd.DataFrame({
                     "Index": [i],
                     "Video Name": [current_video],
-                    "Path": [video_path],
+                    "Path": [video_path[0]],
                     "Duration": [duration]
                 })
                 download_df = pd.concat([new_row, download_df], ignore_index=True)
@@ -192,7 +194,7 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
                 }
 
                 video['downloaded'] = 'True'
-                video['file_path'] = video_path
+                video['file_path'] = str(video_path)
                 save_to_csv(video_urls, csv_path)
                 print("updated download success status to csv")
 
@@ -205,6 +207,7 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
                     "duration": duration,
                     "progress": progress
                 }
+                print(f"Attempt {attempt}/{max_attempts} failed for {current_video}: {e}\n")
 
         if not success:
             video['downloaded'] = 'False'
@@ -261,7 +264,9 @@ def play_video(evt: gr.SelectData):
         row_index = evt.index[0]
         if row_index < len(download_df):
             video_path = download_df.iloc[row_index]["Path"]
+            print(f"Playing video: {video_path}")
             if os.path.exists(video_path):
+                print(f"Playing exist video: {video_path}")
                 return video_path
             else:
                 print(f"Video file not found: {video_path}")

@@ -6,6 +6,36 @@ import os
 from bilibili_api import user, sync
 import toml
 from pathlib import Path
+from copy import deepcopy
+
+import tempfile
+import shutil
+
+def extract_and_convert_time(input_str):
+    # 提取字符串中的所有数字
+    num_str = ''.join(char for char in input_str if char.isdigit())
+    # 转换为整数（秒数）
+    try:
+        seconds = int(num_str)
+    except ValueError:
+        return "输入无效，无法提取数字"
+    # 计算时间单位
+    days = seconds // (24 * 3600)
+    remaining_seconds = seconds % (24 * 3600)
+    hours = remaining_seconds // 3600
+    remaining_seconds %= 3600
+    minutes = remaining_seconds // 60
+    secs = remaining_seconds % 60
+    # 构建结果字符串
+    result = ""
+    if days > 0:
+        result += f"{days}d"
+    if hours > 0 or days > 0:  # 即使hours为0，如果有天数也要显示
+        result += f"{hours}h"
+    if minutes > 0 or hours > 0 or days > 0:  # 即使minutes为0，如果有小时或天数也要显示
+        result += f"{minutes}m"
+    result += f"{secs}s"
+    return result
 
 def read_toml_config(file_path: str = os.path.join(os.getcwd(), "config.toml")) -> dict:
     try:
@@ -34,6 +64,17 @@ async def get_user_name(uid: int) -> str:
     u = user.User(uid)
     user_info = sync(u.get_user_info())
     return user_info["name"]
+
+def get_file_names(output_dir: str, video_info: dict) -> list:
+    """获取视频文件名"""
+    filenames=[]
+    title = video_info['title']
+    if len( video_info['pages'])==1:
+        return [os.path.join(output_dir, f"{title}.mp4")]
+    # 如果有分P，添加P数
+    for pages in video_info['pages']:
+        filenames.append(os.path.join(output_dir, title, f"{pages['part']}.mp4")) 
+    return filenames
 
 async def get_user_video_urls(uid: int, output_dir: str, updatefile: bool = False) -> list:
     """获取指定用户的所有视频URL，并处理CSV文件"""
@@ -115,31 +156,63 @@ async def get_user_video_urls(uid: int, output_dir: str, updatefile: bool = Fals
     save_to_csv(video_urls, csv_path)
     return video_urls
 
+
+
 def save_to_csv(video_urls: list, csv_path: Path):
     """保存视频信息到CSV文件"""
-    fieldnames = ['url', 'title', 'duration', 'downloaded', 'file_path']
-    with open(csv_path, 'w', encoding='utf-8', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(video_urls)
-    # print(f"Saved video URLs to {csv_path}")
+    video_urls_temp = deepcopy(video_urls)
+    for item in video_urls_temp:
+        for key in item:
+            item[key] = str(item[key])
+    fieldnames = ['url', 'title', 'duration', 'downloaded', 'file_path','info']
+    # 创建临时文件
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', newline='', delete=False) as temp_file:
+        try:
+            writer = csv.DictWriter(temp_file, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(video_urls_temp)
+            temp_file.flush()  # 确保内容写入磁盘
+            # 只有当写入成功时才替换原文件
+            shutil.move(temp_file.name, csv_path)
+        except Exception as e:
+            # 如果发生错误，删除临时文件并抛出异常
+            temp_file.close()
+            Path(temp_file.name).unlink()
+            raise e
 
-def download_video(url: str, output_dir: str, quality: str, sessdata: str, title: str, timeout: int) -> str:
+
+def download_video(url: str, output_dir: str, quality: str, sessdata: str, video_info: dict, timeout: int) -> str:
     """使用yutto下载单个视频并返回文件路径"""
-    command = [
-        "yutto",
-        "--sessdata", str(sessdata),
-        "-d", str(output_dir),
-        "-q", str(quality),
-        "--download-interval", "2",
-        url
-    ]
+    if (len(video_info['pages'])>1):
+        command = [
+            "yutto",
+            "--sessdata", str(sessdata),
+            "-d", str(output_dir),
+            "-q", str(quality),
+            "-b",
+            "-p", "1~-1",
+            "--download-interval", "2",
+            "--save-cover",
+            url
+        ]
+    else:
+        command = [
+            "yutto",
+            "--sessdata", str(sessdata),
+            "-d", str(output_dir),
+            "-q", str(quality),
+            "-p", "1~-1",
+            "--download-interval", "2",
+            "--save-cover",
+            url
+        ]
     subprocess.run(command, check=True, timeout=timeout)
     # 假设下载的文件名基于URL的bvid
     bvid = url.split("/")[-1]
-    file_path = os.path.join(output_dir, f"{title}.mp4")  # 可能需要根据实际情况调整
+    # file_path = os.path.join(output_dir, f"{title}.mp4")  # 可能需要根据实际情况调整
+    filepaths = get_file_names(output_dir, video_info)
     print(f"Successfully downloaded: {url}")
-    return file_path
+    return filepaths
 
 async def download_all_videos(arg_dict: dict, progress_callback=None):
     uid = arg_dict["uid"]
@@ -196,13 +269,15 @@ async def download_all_videos(arg_dict: dict, progress_callback=None):
         
         # 更新视频信息
         video['title'] = video_info['title']
-        video['duration'] = str(video_info['duration'])
+        # video['duration'] = str(video_info['duration'])
+        video['duration'] = extract_and_convert_time(str(video_info['duration']))
+        video['info'] = str(video_info)
         save_to_csv(video_urls, csv_path)
 
         print(f"Downloading video {i}/{total_videos}")
-        print(f"视频名称：{video_info['title']}，视频时长：{video_info['duration']}秒")
+        print(f"视频名称：{video_info['title']}，视频时长：{video['duration']}")
         if progress_callback:
-            progress_callback(f"Downloading video {i}/{total_videos}: {video_info['title']} (Duration: {video_info['duration']}s)\n")
+            progress_callback(f"Downloading video {i}/{total_videos}: {video_info['title']} (Duration: {video['duration']})\n")
 
         estimated_time = 5 + video_info['duration'] * 2
         max_attempts = 5
@@ -215,9 +290,9 @@ async def download_all_videos(arg_dict: dict, progress_callback=None):
                 if progress_callback:
                     progress_callback(f"Attempt {attempt}/{max_attempts} for video {i}/{total_videos}\n")
                 print(f"Download attempt #{attempt}")
-                file_path = download_video(url, output_dir, quality, arg_dict["SESSDATA"], title=video['title'],timeout=estimated_time)
+                file_path = download_video(url, output_dir, quality, arg_dict["SESSDATA"], title=video_info,timeout=estimated_time)
                 video['downloaded'] = 'True'
-                video['file_path'] = file_path
+                video['file_path'] = str(file_path)
                 save_to_csv(video_urls, csv_path)
                 success = True
             except subprocess.TimeoutExpired:
