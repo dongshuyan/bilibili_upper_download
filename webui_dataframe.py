@@ -5,7 +5,7 @@ import os
 import pandas as pd
 from bilibili_upper_download import read_toml_config, get_user_name, get_user_video_urls, get_video_info, download_video, save_to_csv, extract_and_convert_time
 from pathlib import Path
-
+import platform
 
 # Language dictionaries (保持不变)
 TEXTS = {
@@ -33,7 +33,10 @@ TEXTS = {
         "log_label": "Download Log",
         "toggle_button": "Switch to Chinese",
         "downloaded_videos_label": "Downloaded Videos",
-        "video_player_label": "Video Player"
+        "video_player_label": "Video Player",
+        "dialog_message": "Video file size is {size:.2f}MB, exceeding 1GB. Please choose playback method:",
+        "web_play_button": "Play in web",
+        "local_play_button": "Play with local player (recommended)"
     },
     "zh": {
         "title": "Bilibili视频下载器",
@@ -44,7 +47,7 @@ TEXTS = {
         "output_dir_placeholder": "~/Downloads",
         "quality_label": "视频质量",
         "credentials_label": "Bilibili凭证（如果在config.toml中可留空）",
-        "sessdata_label": "SESSDATA",
+        "sessdata_label": "SESSDATA（下载高清视频必须）",
         "sessdata_placeholder": "输入SESSDATA",
         "bili_jct_label": "BILI_JCT",
         "bili_jct_placeholder": "输入BILI_JCT",
@@ -59,7 +62,10 @@ TEXTS = {
         "log_label": "下载日志",
         "toggle_button": "切换到英文",
         "downloaded_videos_label": "已下载视频",
-        "video_player_label": "视频播放器"
+        "video_player_label": "视频播放器",
+        "dialog_message": "视频文件大小为 {size:.2f}MB，超过1GB，请选择播放方式：",
+        "web_play_button": "在网页中播放",
+        "local_play_button": "本地播放器播放 (推荐)"
     }
 }
 
@@ -258,19 +264,72 @@ def download_wrapper(uid, output_dir, video_quality, sessdata, bili_jct, buvid3)
     finally:
         loop.close()
 
-def play_video(evt: gr.SelectData):
+def play_video(evt: gr.SelectData, lang):
     global download_df
     if evt.index and len(evt.index) > 0:
         row_index = evt.index[0]
         if row_index < len(download_df):
             video_path = download_df.iloc[row_index]["Path"]
-            print(f"Playing video: {video_path}")
+            print(f"Selected video: {video_path}")
+            
             if os.path.exists(video_path):
-                print(f"Playing exist video: {video_path}")
-                return video_path
+                file_size = os.path.getsize(video_path)
+                size_limit = 1 * 1024 * 1024 * 1024  # 1G in bytes
+                
+                if file_size <= size_limit:
+                    print(f"File size {file_size/(1024*1024)}MB <= 1G, playing in web")
+                    return video_path, gr.update(visible=False), ""
+                else:
+                    print(f"File size {file_size/(1024*1024)}MB > 1G, showing dialog")
+                    dialog_msg = f"## {TEXTS[lang]['dialog_message'].format(size=file_size/(1024*1024))}"
+                    return None, gr.update(visible=True), dialog_msg
             else:
                 print(f"Video file not found: {video_path}")
-    return None
+    print("No valid selection, hiding dialog")
+    return None, gr.update(visible=False), ""
+
+def handle_playback_choice(choice, video_path):
+    if choice == TEXTS["zh"]["web_play_button"] or choice == TEXTS["en"]["web_play_button"]:
+        print(f"Playing in web: {video_path}")
+        return video_path, gr.update(visible=False)
+    elif choice == TEXTS["zh"]["local_play_button"] or choice == TEXTS["en"]["local_play_button"]:
+        print(f"Opening with local player: {video_path}")
+        try:
+            system = platform.system()
+            if system == "Windows":
+                os.startfile(video_path)
+            elif system == "Darwin":  # macOS
+                subprocess.run(["open", video_path], check=True)
+            else:  # Linux
+                subprocess.run(["xdg-open", video_path], check=True)
+            print(f"Opened video file: {video_path}")
+        except Exception as e:
+            print(f"Error opening video file {video_path}: {e}")
+    return None, gr.update(visible=False)
+
+def download_wrapper(uid, output_dir, video_quality, sessdata, bili_jct, buvid3):
+    global download_df
+    async def run_generator():
+        async for result in run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid3):
+            yield (
+                result["log"],
+                result["up_name"],
+                result["download_progress"],
+                result["current_video"],
+                result["duration"],
+                result["progress"],
+                download_df[["Index", "Video Name", "Duration"]]
+            )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    gen = run_generator()
+    try:
+        while True:
+            yield loop.run_until_complete(gen.__anext__())
+    except StopAsyncIteration:
+        pass
+    finally:
+        loop.close()
 
 def create_webui():
     def toggle_language(current_lang):
@@ -296,11 +355,15 @@ def create_webui():
             gr.update(label=texts['credentials_label']),
             gr.update(label=texts['downloaded_videos_label']),
             gr.update(label=texts['video_player_label']),
+            gr.update(value=texts['start_button']),
+            gr.update(value=texts['web_play_button']),
+            gr.update(value=texts['local_play_button']),
             new_lang
         ]
 
     with gr.Blocks(title="Bilibili Video Downloader", theme=gr.themes.Soft()) as demo:
         lang_state = gr.State(value="zh")
+        selected_video_path = gr.State(value=None)
 
         toggle_btn = gr.Button(value=TEXTS["zh"]["toggle_button"])
         title_md = gr.Markdown(f"# {TEXTS['zh']['title']}")
@@ -341,9 +404,17 @@ def create_webui():
                             interactive=True,
                             height=200
                         )
+                        with gr.Group(visible=False) as dialog_group:
+                            dialog_text = gr.Markdown(
+                                value="",  # 初始为空
+                                elem_classes="dialog-text"
+                            )
+                            with gr.Row():
+                                web_play_btn = gr.Button(TEXTS["zh"]["web_play_button"], variant="secondary", elem_classes="dialog-btn")
+                                local_play_btn = gr.Button(TEXTS["zh"]["local_play_button"], variant="primary", elem_classes="dialog-btn")
                         video_player = gr.Video(label=TEXTS["zh"]["video_player_label"], interactive=False)
 
-        # 增强 CSS 来控制 Dataframe 宽度
+        # 更新 CSS
         demo.css = """
             video { max-height: 300px; width: 100%; }
             .gr-dataframe { 
@@ -357,18 +428,28 @@ def create_webui():
             }
             .gr-dataframe th, .gr-dataframe td { 
                 padding: 5px; 
-                white-space: normal;  /* 允许换行 */
+                white-space: normal;
                 word-wrap: break-word; 
-                max-width: 0;  /* 防止过宽 */
+                max-width: 0;
             }
-            .gr-dataframe th:nth-child(1), .gr-dataframe td:nth-child(1) {  /* Index 列 */
-                width: 50px;
+            .gr-dataframe th:nth-child(1), .gr-dataframe td:nth-child(1) { width: 50px; }
+            .gr-dataframe th:nth-child(2), .gr-dataframe td:nth-child(2) { width: 70%; }
+            .gr-dataframe th:nth-child(3), .gr-dataframe td:nth-child(3) { width: 100px; }
+            .dialog-text { 
+                width: 100%; 
+                margin-bottom: 10px; 
+                padding: 10px;
             }
-            .gr-dataframe th:nth-child(2), .gr-dataframe td:nth-child(2) {  /* Video Name 列 */
-                width: 70%;
+            .dialog-text h2 { 
+                margin: 0;  /* 移除 Markdown 默认边距 */
+                padding: 0;
             }
-            .gr-dataframe th:nth-child(3), .gr-dataframe td:nth-child(3) {  /* Duration 列 */
-                width: 100px;
+            .dialog-btn { 
+                width: 200px; 
+                margin: 0 10px; 
+            }
+            .dialog-btn.gr-button-primary { 
+                font-weight: bold; 
             }
         """
 
@@ -381,6 +462,7 @@ def create_webui():
                 up_name_display, download_progress_display,
                 progress_bar, current_video_display, duration_display, output_log,
                 toggle_btn, credentials_accordion, downloaded_videos_df, video_player,
+                download_btn, web_play_btn, local_play_btn,
                 lang_state
             ]
         )
@@ -394,10 +476,36 @@ def create_webui():
             ]
         )
 
+        def update_selected_path(evt: gr.SelectData):
+            global download_df
+            if evt.index and len(evt.index) > 0:
+                row_index = evt.index[0]
+                if row_index < len(download_df):
+                    return download_df.iloc[row_index]["Path"]
+            return None
+
         downloaded_videos_df.select(
             fn=play_video,
+            inputs=[lang_state],
+            outputs=[video_player, dialog_group, dialog_text]
+        )
+
+        downloaded_videos_df.select(
+            fn=update_selected_path,
             inputs=None,
-            outputs=video_player
+            outputs=[selected_video_path]
+        )
+
+        web_play_btn.click(
+            fn=handle_playback_choice,
+            inputs=[gr.State(value=TEXTS["zh"]["web_play_button"]), selected_video_path],
+            outputs=[video_player, dialog_group]
+        )
+        
+        local_play_btn.click(
+            fn=handle_playback_choice,
+            inputs=[gr.State(value=TEXTS["zh"]["local_play_button"]), selected_video_path],
+            outputs=[video_player, dialog_group]
         )
 
     return demo
