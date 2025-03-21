@@ -133,6 +133,8 @@ def parse_download_speed(line):
     # print()
     # print('*'*20)
     # print(f"Line: {line}")
+    if 'INFO' in line.upper():
+        print(line)
     """解析下载速度，基于第二个 '/' 前面的数字和单位"""
     parts = line.split('/')
     file_size = 0
