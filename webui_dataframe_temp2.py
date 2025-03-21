@@ -71,7 +71,7 @@ TEXTS = {
         "current_video_label": "Current Video",
         "duration_label": "Duration",
         "log_label": "Download Log",
-        "toggle_button": "切换到中文",
+        "toggle_button": "Switch to Chinese",
         "downloaded_videos_label": "Downloaded Videos",
         "video_player_label": "Video Player",
         "dialog_message": "Video file size is {size:.2f}MB, exceeding 1GB. Please choose playback method:",
@@ -105,7 +105,7 @@ TEXTS = {
         "current_video_label": "当前视频",
         "duration_label": "当前视频时长",
         "log_label": "下载日志",
-        "toggle_button": "Switch to English",
+        "toggle_button": "切换到英文",
         "downloaded_videos_label": "已下载视频",
         "video_player_label": "视频播放器",
         "dialog_message": "视频文件大小为 {size:.2f}MB，超过1GB，请选择播放方式：",
@@ -130,44 +130,35 @@ def format_time(seconds):
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 def parse_download_speed(line):
-    # print()
-    # print('*'*20)
-    # print(f"Line: {line}")
     """解析下载速度，基于第二个 '/' 前面的数字和单位"""
     parts = line.split('/')
-    file_size = 0
-    download_size = 0
-    speed_num = 0
+    file_size = "0 KiB"
+    download_size = "0 KiB"
+    speed_num = "0"
     if len(parts) >= 3:  # 确保有至少两个 '/'（如 "18.82 GiB/ 24.19 GiB 766.48 KiB/s"）
         download_size_part = parts[0].strip().split()  # 取第一个 '/' 前面的部分，例如 "18.82 GiB"
-        if len(re.findall(r'\d+\.?\d*',parts[0])) > 0:
-            download_size=re.findall(r'\d+\.?\d*', parts[0])[-1]
-            download_size = str(download_size) +' '+ download_size_part[-1] 
+        if len(re.findall(r'\d+\.?\d*', parts[0])) > 0:
+            download_size = re.findall(r'\d+\.?\d*', parts[0])[-1]
+            download_size = str(download_size) + ' ' + download_size_part[-1]
         else:
-            download_size = '0 KiB'   
+            download_size = '0 KiB'
         
-        file_size_part = parts[1].strip().split()  # 取第二个 '/' 前面的部分，例如 "24.19 GiB" 
-        if len(re.findall(r'\d+\.?\d*',file_size_part[0])) > 0:
-            file_size=re.findall(r'\d+\.?\d*', file_size_part[0])[-1]
-            file_size = str(file_size) +' '+ file_size_part[1] 
+        file_size_part = parts[1].strip().split()  # 取第二个 '/' 前面的部分，例如 "24.19 GiB"
+        if len(re.findall(r'\d+\.?\d*', file_size_part[0])) > 0:
+            file_size = re.findall(r'\d+\.?\d*', file_size_part[0])[-1]
+            file_size = str(file_size) + ' ' + file_size_part[1]
         else:
-            file_size = '0 KiB'   
+            file_size = '0 KiB'
         
-        speed_part = parts[-2].strip()  # 取第二个 '/' 后面的部分，例如 "766.48 KiB/s"
+        speed_part = parts[-1].strip()  # 取第二个 '/' 后面的部分，例如 "766.48 KiB/s"
         speed_components = speed_part.split()  # 按空格分割，例如 ["766.48", "KiB/s"]
         if len(speed_components) >= 2:
-            # print(f"Speed components: {speed_components}")
-            # print(f"speed_components[-2]: {speed_components[-2]}")
-            if len(re.findall(r'\d+\.?\d*', speed_components[-2])) > 0:
-                speed_num=re.findall(r'\d+\.?\d*', speed_components[-2])[-1]
+            if len(re.findall(r'\d+\.?\d*', speed_components[0])) > 0:
+                speed_num = re.findall(r'\d+\.?\d*', speed_components[0])[-1]
             else:
-                speed_num = 0
-            # print(f"Speed: {speed_num} {speed_components[-1]}/s")
-            # print('#'*20)
-            # print()
-            return download_size, file_size ,f"{speed_num} {speed_components[-1]}/s" 
-    return "0 KiB","0 KiB","0 KiB/s" 
-
+                speed_num = "0"
+            return download_size, file_size, f"{speed_num} {speed_components[-1]}"
+    return "0 KiB", "0 KiB", "0 KiB/s"
 
 async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid3):
     global download_df, abort_current
@@ -188,7 +179,7 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
             if key in toml_args["basic"] and toml_args["basic"][key] and (arg_dict[key] is None or arg_dict[key] == ""):
                 arg_dict[key] = toml_args["basic"][key]
     except Exception as e:
-        yield {"log": f"Error loading TOML config: {e}\n", "up_name": "", "download_progress": "", "current_video": "", "duration": "", "download_time": "00:00:00", "download_speed": "0 KiB/s","download_size": "0 KiB", "file_size": "0 KiB", "progress": 0}
+        yield {"log": f"Error loading TOML config: {e}\n", "up_name": "", "download_progress": "", "current_video": "", "duration": "", "download_time": "00:00:00", "download_speed": "0 KiB/s", "download_size": "0 KiB", "file_size": "0 KiB", "progress": 0}
         return
 
     up_name = await get_user_name(int(uid))
@@ -280,7 +271,6 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
 
         max_attempts = 5
         success = False
-        is_completed = False
         attempt = 0
 
         while attempt < max_attempts and not success:
@@ -325,8 +315,9 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
                     )
                     
                     download_speed = "0 KiB/s"
-                    download_size= "0 KiB"
-                    file_size= "0 KiB"
+                    download_size = "0 KiB"
+                    file_size = "0 KiB"
+                    is_completed = False
                     
                     # 读取临时文件并解析速度
                     last_pos = 0
@@ -342,8 +333,10 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
                             last_pos = f.tell()
                             
                             for line in new_lines:
+                                if "合并完成" in line:  # 检查是否包含“合并完成”
+                                    is_completed = True
                                 if '/' in line:
-                                    download_size, file_size ,download_speed = parse_download_speed(line)
+                                    download_size, file_size, download_speed = parse_download_speed(line)
                                     yield {
                                         "log": f"Progress update: {line.strip()}\n",
                                         "up_name": up_name,
@@ -351,7 +344,6 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
                                         "current_video": current_video,
                                         "duration": duration,
                                         "download_time": format_time(elapsed_time),
-
                                         "download_speed": download_speed,
                                         "download_size": download_size,
                                         "file_size": file_size,
@@ -371,7 +363,7 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
                             "progress": progress
                         }
                         await asyncio.sleep(0.1)
-                    
+
                     # 进程结束后，检查是否包含“合并完成”
                     with open(temp_file_path, 'r', encoding='utf-8', errors='replace') as f:
                         full_output = f.read()
@@ -379,7 +371,6 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
                             is_completed = True
 
                     if is_completed:
-                    # if process.returncode == 0:
                         video_path = get_file_names(output_dir, video_info)
                         success = True
                         
@@ -408,7 +399,7 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
                         save_to_csv(video_urls, csv_path)
                         print("updated download success status to csv")
                     else:
-                        print("Yutto is not completed")
+                        raise Exception("Download failed: '合并完成' not found in output")
 
                 except Exception as e:
                     if process:

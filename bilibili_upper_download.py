@@ -11,6 +11,30 @@ from copy import deepcopy
 import tempfile
 import shutil
 
+
+def truncate_long_values(d, max_length=500):
+    """
+    递归遍历字典，若某个非字典元素的字符串长度超过 max_length，则去掉该元素。
+    参数:
+        d (dict): 输入字典
+        max_length (int): 字符串最大长度限制，默认为50
+    返回:
+        dict: 处理后的字典
+    """
+    result = {}
+    for key, value in d.items():
+        if isinstance(value, dict):
+            # 如果值是字典，递归调用
+            result[key] = truncate_long_values(value, max_length)
+        else:
+            # 如果值不是字典，转成字符串检查长度
+            str_value = str(value)
+            if len(str_value) <= max_length or key=="title" or key=="duration" or key=="pages":
+                result[key] = value  # 长度不超过限制，保留原值
+            # 超过长度则跳过，不加入结果
+    return result
+
+
 def extract_and_convert_time(input_str):
     # 提取字符串中的所有数字
     num_str = ''.join(char for char in input_str if char.isdigit())
@@ -52,13 +76,38 @@ def read_toml_config(file_path: str = os.path.join(os.getcwd(), "config.toml")) 
         print(f"Unexpected error reading {file_path}: {e}")
         raise
 
+# async def get_video_info(bvid: str, SESSDATA: str, BILI_JCT: str, BUVID3: str) -> dict:
+#     from bilibili_api import video, Credential
+#     #credential = Credential(sessdata=SESSDATA, bili_jct=BILI_JCT, buvid3=BUVID3)
+#     credential = Credential(sessdata='', bili_jct='', buvid3='')
+#     v = video.Video(bvid=bvid, credential=credential)
+#     info = await v.get_info()
+#     return info
+
 async def get_video_info(bvid: str, SESSDATA: str, BILI_JCT: str, BUVID3: str) -> dict:
     from bilibili_api import video, Credential
+    import asyncio
+    
     #credential = Credential(sessdata=SESSDATA, bili_jct=BILI_JCT, buvid3=BUVID3)
     credential = Credential(sessdata='', bili_jct='', buvid3='')
     v = video.Video(bvid=bvid, credential=credential)
-    info = await v.get_info()
-    return info
+    
+    for attempt in range(5):  # 尝试5次
+        try:
+            info = await v.get_info()
+            return truncate_long_values(info)
+        except Exception as e:
+            error_msg = str(e)
+            # 如果错误信息包含“稿件不可见”，立即返回带默认值的字典
+            if "稿件不可见" in error_msg:
+                return {"title": "稿件不可见", "duration": 0, "pages": []}
+            # 如果不是最后一次尝试，等待1秒后重试
+            if attempt < 4:
+                await asyncio.sleep(1)  # 等待1秒
+                continue
+            # 如果是最后一次尝试仍然失败，返回带默认值的字典
+            return {"title": "get_video_info失败", "duration": 0, "pages": []}
+
 
 async def get_user_name(uid: int) -> str:
     u = user.User(uid)
@@ -182,9 +231,11 @@ def save_to_csv(video_urls: list, csv_path: Path):
 
 
 def download_video(url: str, output_dir: str, quality: str, sessdata: str, video_info: dict, timeout: int) -> str:
-    if timeout>60*20:
-        timeout = 60*20
+    if timeout>60*40:
+        timeout = 60*40
     """使用yutto下载单个视频并返回文件路径"""
+    if (len(video_info['pages'])==0):
+        return []
     if (len(video_info['pages'])>1):
         command = [
             "yutto",
@@ -215,6 +266,8 @@ def download_video(url: str, output_dir: str, quality: str, sessdata: str, video
     filepaths = get_file_names(output_dir, video_info)
     print(f"Successfully downloaded: {url}")
     return filepaths
+
+
 
 async def download_all_videos(arg_dict: dict, progress_callback=None):
     uid = arg_dict["uid"]
@@ -269,6 +322,10 @@ async def download_all_videos(arg_dict: dict, progress_callback=None):
             BUVID3=""
         )
         
+        if (len(video_info['pages']) <1):
+            print(f"Skipping disappeared video {i}/{total_videos}: {video['url']}")
+            continue
+
         # 更新视频信息
         video['title'] = video_info['title']
         # video['duration'] = str(video_info['duration'])
