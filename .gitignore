@@ -7,6 +7,7 @@ __pycache__/*
 .DS_Store
 config*
 config.json
+*temp*
 
 # 例外：不忽略 example.toml
 !example.toml
