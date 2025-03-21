@@ -11,6 +11,18 @@ import json
 import tempfile
 import re
 
+import psutil
+
+def kill_process_and_children(process):
+    """终止进程及其所有子进程"""
+    try:
+        parent = psutil.Process(process.pid)
+        children = parent.children(recursive=True)  # 获取所有子进程，包括 yutto 和 tee
+        for child in children:
+            child.kill()  # 发送 SIGKILL
+        parent.kill()  # 终止 shell
+    except psutil.NoSuchProcess:
+        pass  # 进程可能已结束
 # Define the config file path
 CONFIG_FILE = Path(__file__).parent / "config.json"
 
@@ -133,8 +145,6 @@ def parse_download_speed(line):
     # print()
     # print('*'*20)
     # print(f"Line: {line}")
-    if 'INFO' in line.upper():
-        print(line)
     """解析下载速度，基于第二个 '/' 前面的数字和单位"""
     parts = line.split('/')
     file_size = 0
@@ -290,6 +300,7 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
             abort_current = False
             start_time = time.time()
             process = None
+            logcontent = f"Attempt {attempt}/{max_attempts} downloading {current_video}\n"
             
             # 创建临时文件用于捕获输出
             with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp_file:
@@ -334,7 +345,8 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
                     last_pos = 0
                     while process.poll() is None:
                         if abort_current:
-                            process.terminate()
+                            # process.terminate()
+                            kill_process_and_children(process)
                             raise Exception("Download aborted by user")
                         elapsed_time = time.time() - start_time
                         
@@ -344,10 +356,27 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
                             last_pos = f.tell()
                             
                             for line in new_lines:
+                                if 'INFO' in line.upper() or 'ERROR' in line.upper() or 'WARN' in line.upper():
+                                    if '合并' in line:
+                                        print(line)
+                                    logcontent += line 
+                                    yield {
+                                        "log": logcontent,
+                                        "up_name": up_name,
+                                        "download_progress": f"{i}/{total_videos}",
+                                        "current_video": current_video,
+                                        "duration": duration,
+                                        "download_time": format_time(elapsed_time),
+
+                                        "download_speed": download_speed,
+                                        "download_size": download_size,
+                                        "file_size": file_size,
+                                        "progress": progress
+                                    }
                                 if '/' in line:
                                     download_size, file_size ,download_speed = parse_download_speed(line)
                                     yield {
-                                        "log": f"Progress update: {line.strip()}\n",
+                                        "log": logcontent,
                                         "up_name": up_name,
                                         "download_progress": f"{i}/{total_videos}",
                                         "current_video": current_video,
@@ -361,7 +390,7 @@ async def run_download(uid, output_dir, video_quality, sessdata, bili_jct, buvid
                                     }
                         
                         yield {
-                            "log": f"Attempt {attempt}/{max_attempts} downloading {current_video}\n",
+                            "log": logcontent,
                             "up_name": up_name,
                             "download_progress": f"{i}/{total_videos}",
                             "current_video": current_video,
